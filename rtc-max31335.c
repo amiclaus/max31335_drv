@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/regmap.h>
+#include <linux/rtc.h>
 
 
 struct max31335_data {
