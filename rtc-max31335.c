@@ -87,6 +87,9 @@
 #define MAX31335_TS3_YEAR		0x5E
 #define MAX31335_TS3_FLAGS		0x5F
 
+#define MAX31335_STATUS1_A1F		BIT(0)
+#define MAX31335_INT_EN1_A1IE		BIT(0)
+
 struct max31335_data {
 	struct regmap *regmap;
 	struct rtc_device *rtc;
