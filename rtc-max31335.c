@@ -241,10 +241,11 @@ static const struct rtc_class_ops max31335_rtc_ops = {
 static int max31335_probe(struct i2c_client *client)
 {
 	struct max31335_data *max31335;
+	u8 status;
 	int ret;
 
 	max31335 = devm_kzalloc(&client->dev, sizeof(struct max31335_data),
-			      GFP_KERNEL);
+				GFP_KERNEL);
 	if (!max31335)
 		return -ENOMEM;
 
@@ -254,7 +255,7 @@ static int max31335_probe(struct i2c_client *client)
 
 	i2c_set_clientdata(client, max31335);
 
-	ret = regmap_read(max31335->regmap, max31335_STATUS1, &status);
+	ret = regmap_read(max31335->regmap, MAX31335_STATUS1, &status);
 	if (ret < 0)
 		return ret;
 
@@ -268,7 +269,8 @@ static int max31335_probe(struct i2c_client *client)
 						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 						"max31335", max31335);
 		if (ret) {
-			dev_warn(&client->dev, "unable to request IRQ, alarmrv3032s disabled\n");
+			dev_warn(&client->dev, "unable to request IRQ,
+				 alarm max31335 disabled\n");
 			client->irq = 0;
 		}
 	}
