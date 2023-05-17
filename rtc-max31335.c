@@ -301,6 +301,6 @@ static struct i2c_driver max31335_driver = {
 };
 module_i2c_driver(max31335_driver);
 
-MODULE_AUTHOR("Alexandre Belloni <alexandre.belloni@bootlin.com>");
-MODULE_DESCRIPTION("Micro Crystal max31335 RTC driver");
+MODULE_AUTHOR("Antoniu Miclaus <antoniu.miclaus@analog.com>");
+MODULE_DESCRIPTION("MAX31335 RTC driver");
 MODULE_LICENSE("GPL v2");
