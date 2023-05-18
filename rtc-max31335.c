@@ -93,10 +93,15 @@
 #define MAX31335_STATUS1_A1F		BIT(0)
 #define MAX31335_INT_EN1_A1IE		BIT(0)
 
+#define MAX31335_TRICKLE		GENMASK(3, 1)
+#define MAX31335_EN_TRICKLE		BIT(0)
+
 struct max31335_data {
 	struct regmap *regmap;
 	struct rtc_device *rtc;
 };
+
+static u16 max31335_trickle_resistors[] = {3000, 6000, 11000};
 
 static const struct regmap_config regmap_config = {
 	.reg_bits = 8,
@@ -279,6 +284,37 @@ static const struct rtc_class_ops max31335_rtc_ops = {
 	.alarm_irq_enable = max31335_alarm_irq_enable,
 };
 
+static int max31335_trickle_charger_setup(struct device *dev, struct max31335_data *max31335)
+{
+	u32 ohms;
+	bool diode = false;
+	int i;
+
+	if (device_property_read_u32(dev, "trickle-resistor-ohms", &ohms))
+		return 0;
+
+	if (device_property_read_bool(dev, "trickle-diode-enable"))
+		diode = true;
+
+	for (i = 0; i < ARRAY_SIZE(max31335_trickle_resistors); i++)
+		if (ohms == max31335_trickle_resistors[i])
+			break;
+
+	if (i >= ARRAY_SIZE(max31335_trickle_resistors)) {
+		dev_warn(dev, "invalid trickle resistor value\n");
+
+		return 0;
+	}
+
+	if (diode)
+		i = i + 4;
+	else
+		i = i + 1;
+
+	return regmap_write(max31335->regmap, MAX31335_TRICKLE_REG,
+			    FIELD_PREP(MAX31335_TRICKLE, i) | MAX31335_EN_TRICKLE);
+}
+
 static int max31335_probe(struct i2c_client *client)
 {
 	struct max31335_data *max31335;
@@ -317,6 +353,8 @@ static int max31335_probe(struct i2c_client *client)
 
 	if (!client->irq)
 		clear_bit(RTC_FEATURE_ALARM, max31335->rtc->features);
+
+	max31335_trickle_charger_setup(&client->dev, max31335);
 
 	max31335->rtc->range_min = RTC_TIMESTAMP_BEGIN_2000;
 	max31335->rtc->range_max = RTC_TIMESTAMP_END_2099;
