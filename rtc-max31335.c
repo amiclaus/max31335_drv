@@ -8,6 +8,9 @@
  *
  */
 
+#include <linux/bcd.h>
+#include <linux/bitfield.h>
+#include <linux/bitops.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
@@ -93,7 +96,7 @@
 struct max31335_data {
 	struct regmap *regmap;
 	struct rtc_device *rtc;
-}
+};
 
 static const struct regmap_config regmap_config = {
 	.reg_bits = 8,
@@ -107,7 +110,8 @@ static int max31335_get_time(struct device *dev, struct rtc_time *tm)
 	u8 date[7];
 	int ret;
 
-	ret = regmap_bulk_read(max31335->regmap, MAX31335_SECONDS, date, sizeof(date));
+	ret = regmap_bulk_read(max31335->regmap, MAX31335_SECONDS, date,
+			       sizeof(date));
 	if (ret)
 		return ret;
 
@@ -126,7 +130,6 @@ static int max31335_set_time(struct device *dev, struct rtc_time *tm)
 {
 	struct max31335_data *max31335 = dev_get_drvdata(dev);
 	u8 date[7];
-	int ret;
 
 	date[0] = bin2bcd(tm->tm_sec);
 	date[1] = bin2bcd(tm->tm_min);
@@ -136,43 +139,48 @@ static int max31335_set_time(struct device *dev, struct rtc_time *tm)
 	date[5] = bin2bcd(tm->tm_mon + 1);
 	date[6] = bin2bcd(tm->tm_year - 100);
 
-	ret = regmap_bulk_write(max31335->regmap, MAX31335_SECONDS, date,
-				sizeof(date));
-	if (ret)
-		return ret;
+	return regmap_bulk_write(max31335->regmap, MAX31335_SECONDS, date,
+				 sizeof(date));
 }
 
 static int max31335_read_offset(struct device *dev, long *offset)
 {
 	struct max31335_data *max31335 = dev_get_drvdata(dev);
-	int ret, value, steps;
+	u32 value;
+	int ret;
 
 	ret = regmap_read(max31335->regmap, MAX31335_AGING_OFFSET, &value);
 	if (ret)
 		return ret;
+
+	*offset = value;
+
+	return 0;
 }
 
 static int max31335_set_offset(struct device *dev, long offset)
 {
+	struct max31335_data *max31335 = dev_get_drvdata(dev);
+
 	return regmap_write(max31335->regmap, MAX31335_AGING_OFFSET, offset);
 }
 
 static int max31335_get_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
 	struct max31335_data *max31335 = dev_get_drvdata(dev);
-	u8 regs[6], ctrl, status;
-	int ret;
+	u8 regs[6];
+	int ret, ctrl, status;
 
 	ret = regmap_bulk_read(max31335->regmap, MAX31335_ALM1_SEC, regs, sizeof(regs));
 	if (ret)
 		return ret;
 
-	tm->tm_sec  = bcd2bin(regs[0] & 0x7f);
-	tm->tm_min  = bcd2bin(regs[1] & 0x7f);
-	tm->tm_hour = bcd2bin(regs[2] & 0x3f);
-	tm->tm_mday = bcd2bin(regs[3] & 0x3f);
-	tm->tm_mon  = bcd2bin(regs[4] & 0x1f);
-	tm->tm_year = bcd2bin(regs[5]) + 100;
+	alrm->time.tm_sec  = bcd2bin(regs[0] & 0x7f);
+	alrm->time.tm_min  = bcd2bin(regs[1] & 0x7f);
+	alrm->time.tm_hour = bcd2bin(regs[2] & 0x3f);
+	alrm->time.tm_mday = bcd2bin(regs[3] & 0x3f);
+	alrm->time.tm_mon  = bcd2bin(regs[4] & 0x1f);
+	alrm->time.tm_year = bcd2bin(regs[5]) + 100;
 
 	ret = regmap_read(max31335->regmap, MAX31335_INT_EN, &ctrl);
 	if (ret)
@@ -183,7 +191,7 @@ static int max31335_get_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 		return ret;
 
 	alrm->enabled = !!(ctrl & MAX31335_INT_EN1_A1IE);
-	alrm->pendind = !!(status & MAX31335_STATUS1_A1F);
+	alrm->pending = !!(status & MAX31335_STATUS1_A1F);
 
 	return 0;
 }
@@ -194,14 +202,15 @@ static int max31335_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	u8 regs[6];
 	int ret;
 
-	regs[0] = bin2bcd(tm->tm_sec);
-	regs[1] = bin2bcd(tm->tm_min);
-	regs[2] = bin2bcd(tm->tm_hour);
-	regs[3] = bin2bcd(tm->tm_mday);
-	date[4] = bin2bcd(tm->tm_mon + 1);
-	date[5] = bin2bcd(tm->tm_year - 100);
+	regs[0] = bin2bcd(alrm->time.tm_sec);
+	regs[1] = bin2bcd(alrm->time.tm_min);
+	regs[2] = bin2bcd(alrm->time.tm_hour);
+	regs[3] = bin2bcd(alrm->time.tm_mday);
+	regs[4] = bin2bcd(alrm->time.tm_mon + 1);
+	regs[5] = bin2bcd(alrm->time.tm_year - 100);
 
-	ret = regmap_bulk_write(max31335->regmap, MAX31335_ALM1_SEC, regs, sizeof(regs));
+	ret = regmap_bulk_write(max31335->regmap, MAX31335_ALM1_SEC,
+				regs, sizeof(regs));
 	if (ret)
 		return ret;
 
@@ -232,8 +241,7 @@ static irqreturn_t max31335_handle_irq(int irq, void *dev_id)
 {
 	struct max31335_data *max31335 = dev_id;
 	struct mutex *lock = &max31335->rtc->ops_lock;
-	u8 status;
-	int ret;
+	int ret, status;
 
 	mutex_lock(lock);
 
@@ -274,8 +282,7 @@ static const struct rtc_class_ops max31335_rtc_ops = {
 static int max31335_probe(struct i2c_client *client)
 {
 	struct max31335_data *max31335;
-	u8 status;
-	int ret;
+	int ret, status;
 
 	max31335 = devm_kzalloc(&client->dev, sizeof(struct max31335_data),
 				GFP_KERNEL);
@@ -302,8 +309,8 @@ static int max31335_probe(struct i2c_client *client)
 						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
 						"max31335", max31335);
 		if (ret) {
-			dev_warn(&client->dev, "unable to request IRQ,
-				 alarm max31335 disabled\n");
+			dev_warn(&client->dev,
+				 "unable to request IRQ, alarm max31335 disabled\n");
 			client->irq = 0;
 		}
 	}
