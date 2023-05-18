@@ -24,6 +24,14 @@ properties:
 
   start-year: true
 
+  trickle-resistor-ohms:
+    enum:
+      - 3000
+      - 6000
+      - 11000
+
+  trickle-diode-enable: true
+
 required:
   - compatible
   - reg
@@ -42,6 +50,8 @@ examples:
             reg = <0x51>;
             pinctrl-0 = <&rtc_nint_pins>;
             interrupts-extended = <&gpio1 16 IRQ_TYPE_LEVEL_HIGH>;
+            trickle-resistor-ohms = <6000>;
+            trickle-diode-enable;
         };
     };
 
