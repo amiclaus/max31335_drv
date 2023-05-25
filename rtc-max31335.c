@@ -99,6 +99,7 @@
 struct max31335_data {
 	struct regmap *regmap;
 	struct rtc_device *rtc;
+	struct clk_hw clkout;
 };
 
 static u16 max31335_trickle_resistors[] = {3000, 6000, 11000};
@@ -315,6 +316,46 @@ static int max31335_trickle_charger_setup(struct device *dev, struct max31335_da
 			    FIELD_PREP(MAX31335_TRICKLE, i) | MAX31335_EN_TRICKLE);
 }
 
+static const struct clk_ops max31335_clkout_ops = {
+	.recalc_rate = max31335_clkout_recalc_rate,
+	.round_rate = max31335_clkout_round_rate,
+	.set_rate = max31335_clkout_set_rate,
+	.enable = max31335_clkout_enable,
+	.disable = max31335_clkout_disable,
+	.is_enabled = max31335_clkout_is_enabled,
+};
+
+struct clk_init_data max31335_clk_init = {
+	.name = "max31335-clkout",
+	.ops = &max31335_clkout_ops,
+};
+
+static int max31335_clkout_register(struct device *dev)
+{
+	struct max31335_data *max31335 = dev_get_drvdata(dev);
+	int ret;
+
+	if (!device_property_present(dev, "#clock-cells"))
+		return 0;
+
+	max31335->clkout.init = &max31335_clk_init;
+
+	ret = devm_clk_hw_register(dev, &max31335->clkout);
+	if (ret)
+		return dev_err_probe(dev, ret, "cannot register clock\n");
+
+	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get,
+					  &max31335->clkout);
+	if (ret)
+		return dev_err_probe(dev, ret, "cannot add hw provider\n");
+
+	ret = clk_prepare_enable(rtc->clkout.clk);
+	if (ret)
+		return dev_err_probe(dev, ret, "cannot enable clkout\n");
+
+	return 0;
+}
+
 static int max31335_probe(struct i2c_client *client)
 {
 	struct max31335_data *max31335;
@@ -344,6 +385,10 @@ static int max31335_probe(struct i2c_client *client)
 	max31335->rtc->range_max = RTC_TIMESTAMP_END_2199;
 
 	ret = devm_rtc_register_device(max31335->rtc);
+	if (ret)
+		return ret;
+
+	ret = max31335_clkout_register(&client->dev);
 	if (ret)
 		return ret;
 
