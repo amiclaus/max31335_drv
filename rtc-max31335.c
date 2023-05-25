@@ -339,10 +339,18 @@ static int max31335_probe(struct i2c_client *client)
 	if (IS_ERR(max31335->rtc))
 		return PTR_ERR(max31335->rtc);
 
+	max31335->rtc->ops = &max31335_rtc_ops;
+	max31335->rtc->range_min = RTC_TIMESTAMP_BEGIN_2000;
+	max31335->rtc->range_max = RTC_TIMESTAMP_END_2199;
+
+	ret = devm_rtc_register_device(max31335->rtc);
+	if (ret)
+		return ret;
+
 	if (client->irq > 0) {
 		ret = devm_request_threaded_irq(&client->dev, client->irq,
 						NULL, max31335_handle_irq,
-						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+						IRQF_ONESHOT,
 						"max31335", max31335);
 		if (ret) {
 			dev_warn(&client->dev,
@@ -355,13 +363,6 @@ static int max31335_probe(struct i2c_client *client)
 		clear_bit(RTC_FEATURE_ALARM, max31335->rtc->features);
 
 	max31335_trickle_charger_setup(&client->dev, max31335);
-
-	max31335->rtc->range_min = RTC_TIMESTAMP_BEGIN_2000;
-	max31335->rtc->range_max = RTC_TIMESTAMP_END_2099;
-	max31335->rtc->ops = &max31335_rtc_ops;
-	ret = devm_rtc_register_device(max31335->rtc);
-	if (ret)
-		return ret;
 
 	return 0;
 }
