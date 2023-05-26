@@ -555,7 +555,8 @@ static int max31335_clkout_register(struct device *dev)
 	return 0;
 }
 
-static int max31335_probe(struct i2c_client *client)
+static int max31335_probe(struct i2c_client *client,
+			  const struct i2c_device_id *id)
 {
 	struct max31335_data *max31335;
 	struct device *hwmon;
@@ -616,18 +617,27 @@ static int max31335_probe(struct i2c_client *client)
 	return max31335_trickle_charger_setup(&client->dev, max31335);
 }
 
-static const __maybe_unused struct of_device_id max31335_of_match[] = {
-	{ .compatible = "adi,max31335", },
+static const struct i2c_device_id max31335_id[] = {
+	{ "max31335", 0 },
 	{ }
 };
+
+MODULE_DEVICE_TABLE(i2c, max31335_id);
+
+static const struct of_device_id max31335_of_match[] = {
+	{ .compatible = "adi,max31335" },
+	{ }
+};
+
 MODULE_DEVICE_TABLE(of, max31335_of_match);
 
 static struct i2c_driver max31335_driver = {
 	.driver = {
 		.name = "rtc-max31335",
-		.of_match_table = of_match_ptr(max31335_of_match),
+		.of_match_table = max31335_of_match,
 	},
-	.probe_new = max31335_probe,
+	.probe = max31335_probe,
+	.id_table = max31335_id,
 };
 module_i2c_driver(max31335_driver);
 
