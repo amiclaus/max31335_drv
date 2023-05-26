@@ -548,7 +548,7 @@ static int max31335_clkout_register(struct device *dev)
 	if (ret)
 		return dev_err_probe(dev, ret, "cannot add hw provider\n");
 
-	ret = clk_prepare_enable(rtc->clkout.clk);
+	ret = clk_prepare_enable(max31335->clkout.clk);
 	if (ret)
 		return dev_err_probe(dev, ret, "cannot enable clkout\n");
 
@@ -558,7 +558,8 @@ static int max31335_clkout_register(struct device *dev)
 static int max31335_probe(struct i2c_client *client)
 {
 	struct max31335_data *max31335;
-	int ret, status;
+	struct device *hwmon;
+	int ret;
 
 	max31335 = devm_kzalloc(&client->dev, sizeof(struct max31335_data),
 				GFP_KERNEL);
@@ -570,10 +571,6 @@ static int max31335_probe(struct i2c_client *client)
 		return PTR_ERR(max31335->regmap);
 
 	i2c_set_clientdata(client, max31335);
-
-	ret = regmap_read(max31335->regmap, MAX31335_STATUS1, &status);
-	if (ret < 0)
-		return ret;
 
 	max31335->rtc = devm_rtc_allocate_device(&client->dev);
 	if (IS_ERR(max31335->rtc))
@@ -606,9 +603,17 @@ static int max31335_probe(struct i2c_client *client)
 	if (!client->irq)
 		clear_bit(RTC_FEATURE_ALARM, max31335->rtc->features);
 
-	max31335_trickle_charger_setup(&client->dev, max31335);
+	max31335_nvmem_cfg.priv = max31335;
 
-	return 0;
+	hwmon = devm_hwmon_device_register_with_info(&client->dev, client->name,
+						     max31335,
+						     &max31335_chip_info,
+						     NULL);
+	if (IS_ERR(hwmon))
+		dev_warn(&client->dev, "cannot register hwmon device: %li\n",
+			 PTR_ERR(hwmon));
+
+	return max31335_trickle_charger_setup(&client->dev, max31335);
 }
 
 static const __maybe_unused struct of_device_id max31335_of_match[] = {
