@@ -8,6 +8,7 @@
  *
  */
 
+#include <asm-generic/unaligned.h>
 #include <linux/bcd.h>
 #include <linux/bitfield.h>
 #include <linux/bitops.h>
@@ -20,6 +21,7 @@
 #include <linux/of_device.h>
 #include <linux/regmap.h>
 #include <linux/rtc.h>
+#include <linux/util_macros.h>
 
 #define MAX31335_STATUS1		0x00
 #define MAX31335_INT_EN			0x01
@@ -98,6 +100,10 @@
 #define MAX31335_TRICKLE		GENMASK(3, 1)
 #define MAX31335_EN_TRICKLE		BIT(0)
 
+#define MAX31335_HRS_F_AM_PM		BIT(5)
+#define MAX31335_HRS_F_12_24		BIT(6)
+#define MAX31335_MONTH_CENTURY		BIT(7)
+
 #define MAX31335_ENCLKO			BIT(2)
 
 #define clk_hw_to_max31335(_hw) container_of(_hw, struct max31335_data, clkout)
@@ -112,13 +118,48 @@ static const int max31335_clkout_freq[] = { 1, 64, 1024, 32768 };
 
 static u16 max31335_trickle_resistors[] = {3000, 6000, 11000};
 
+static bool max31335_volatile_reg(struct device *dev, unsigned int reg)
+{
+	/* time keeping registers */
+	if (reg >= MAX31335_SECONDS && reg < MAX31335_SECONDS + MAX31335_TIME_SIZE)
+		return true;
+
+	/* interrupt status register */
+	if (reg == MAX31335_INT_EN1_A1IE)
+		return true;
+
+	/* temperature registers */
+	if (reg == MAX31335_TEMP_DATA_MSB || MAX31335_TEMP_DATA_LSB)
+		return true;
+}
+
 static const struct regmap_config regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 8,
 	.max_register = 0x5F,
+	.volatile_reg = max31335_volatile_reg,
 };
 
-static int max31335_get_time(struct device *dev, struct rtc_time *tm)
+static int max31335_get_hour(u8 hour_reg)
+{
+	int hour;
+
+	/* 24Hr mode */
+	if (!FIELD_GET(MAX31335_HRS_F_12_24, hour_reg))
+		return bcd2bin(hour_reg & 0x3f);
+
+	/* 12Hr mode */
+	hour = bcd2bin(hour_reg & 0x1f);
+	if (hour == 12)
+		hour = 0;
+
+	if (FIELD_GET(MAX31335_HRS_F_AM_PM, hour_reg))
+		hour += 12;
+
+	return hour;
+}
+
+static int max31335_read_time(struct device *dev, struct rtc_time *tm)
 {
 	struct max31335_data *max31335 = dev_get_drvdata(dev);
 	u8 date[7];
@@ -131,11 +172,14 @@ static int max31335_get_time(struct device *dev, struct rtc_time *tm)
 
 	tm->tm_sec  = bcd2bin(date[0] & 0x7f);
 	tm->tm_min  = bcd2bin(date[1] & 0x7f);
-	tm->tm_hour = bcd2bin(date[2] & 0x3f);
-	tm->tm_wday = date[3] & 0x7;
+	tm->tm_hour = max31335_get_hour(date[2]);
+	tm->tm_wday = bcd2bin(date[3] & 0x7) - 1;
 	tm->tm_mday = bcd2bin(date[4] & 0x3f);
 	tm->tm_mon  = bcd2bin(date[5] & 0x1f) - 1;
 	tm->tm_year = bcd2bin(date[6]) + 100;
+
+	if (FIELD_GET(MAX31335_MONTH_CENTURY, date[5]))
+		tm->tm_year += 100;
 
 	return 0;
 }
@@ -148,10 +192,13 @@ static int max31335_set_time(struct device *dev, struct rtc_time *tm)
 	date[0] = bin2bcd(tm->tm_sec);
 	date[1] = bin2bcd(tm->tm_min);
 	date[2] = bin2bcd(tm->tm_hour);
-	date[3] = tm->tm_wday;
+	date[3] = bin2bcd(tm->tm_wday + 1);
 	date[4] = bin2bcd(tm->tm_mday);
 	date[5] = bin2bcd(tm->tm_mon + 1);
-	date[6] = bin2bcd(tm->tm_year - 100);
+	date[6] = bin2bcd(tm->tm_year % 100);
+
+	if (tm->tm_year >= 200)
+		date[5] |= FIELD_PREP(MAX31335_MONTH_CENTURY, 1);
 
 	return regmap_bulk_write(max31335->regmap, MAX31335_SECONDS, date,
 				 sizeof(date));
@@ -179,11 +226,12 @@ static int max31335_set_offset(struct device *dev, long offset)
 	return regmap_write(max31335->regmap, MAX31335_AGING_OFFSET, offset);
 }
 
-static int max31335_get_alarm(struct device *dev, struct rtc_wkalrm *alrm)
+static int max31335_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
 	struct max31335_data *max31335 = dev_get_drvdata(dev);
-	u8 regs[6];
 	int ret, ctrl, status;
+	struct rtc_time time;
+	u8 regs[6];
 
 	ret = regmap_bulk_read(max31335->regmap, MAX31335_ALM1_SEC, regs, sizeof(regs));
 	if (ret)
@@ -193,8 +241,15 @@ static int max31335_get_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	alrm->time.tm_min  = bcd2bin(regs[1] & 0x7f);
 	alrm->time.tm_hour = bcd2bin(regs[2] & 0x3f);
 	alrm->time.tm_mday = bcd2bin(regs[3] & 0x3f);
-	alrm->time.tm_mon  = bcd2bin(regs[4] & 0x1f);
+	alrm->time.tm_mon  = bcd2bin(regs[4] & 0x1f) - 1;
 	alrm->time.tm_year = bcd2bin(regs[5]) + 100;
+
+	ret = max31335_read_time(dev, &time);
+	if (ret)
+		return ret;
+
+	if (time.tm_year >= 200)
+		alrm->time.tm_year += 100;
 
 	ret = regmap_read(max31335->regmap, MAX31335_INT_EN, &ctrl);
 	if (ret)
@@ -204,8 +259,8 @@ static int max31335_get_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	if (ret)
 		return ret;
 
-	alrm->enabled = !!(ctrl & MAX31335_INT_EN1_A1IE);
-	alrm->pending = !!(status & MAX31335_STATUS1_A1F);
+	alrm->enabled = FIELD_GET(MAX31335_INT_EN1_A1IE, ctrl);
+	alrm->pending = FIELD_GET(MAX31335_STATUS1_A1F, status);
 
 	return 0;
 }
@@ -213,6 +268,7 @@ static int max31335_get_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 static int max31335_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 {
 	struct max31335_data *max31335 = dev_get_drvdata(dev);
+	unsigned int reg;
 	u8 regs[6];
 	int ret;
 
@@ -221,34 +277,29 @@ static int max31335_set_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	regs[2] = bin2bcd(alrm->time.tm_hour);
 	regs[3] = bin2bcd(alrm->time.tm_mday);
 	regs[4] = bin2bcd(alrm->time.tm_mon + 1);
-	regs[5] = bin2bcd(alrm->time.tm_year - 100);
+	regs[5] = bin2bcd(alrm->time.tm_year % 100);
 
 	ret = regmap_bulk_write(max31335->regmap, MAX31335_ALM1_SEC,
 				regs, sizeof(regs));
 	if (ret)
 		return ret;
 
-	ret = regmap_update_bits(max31335->regmap, MAX31335_STATUS1,
-				 MAX31335_STATUS1_A1F, 0);
+	reg = FIELD_PREP(MAX31335_INT_EN1_A1IE, alrm->enabled);
+	return regmap_update_bits(max31335->regmap, MAX31335_INT_EN,
+				  MAX31335_INT_EN1_A1IE, reg);
 	if (ret)
 		return ret;
 
-	return regmap_update_bits(max31335->regmap, MAX31335_INT_EN,
-				  MAX31335_INT_EN1_A1IE, MAX31335_INT_EN1_A1IE);
+	return regmap_update_bits(max31335->regmap, MAX31335_STATUS1,
+				 MAX31335_STATUS1_A1F, 0);
 }
 
 static int max31335_alarm_irq_enable(struct device *dev, unsigned int enabled)
 {
 	struct max31335_data *max31335 = dev_get_drvdata(dev);
-	int ret;
-
-	ret = regmap_update_bits(max31335->regmap, MAX31335_STATUS1,
-				 MAX31335_STATUS1_A1F, 0);
-	if (ret)
-		return ret;
 
 	return regmap_update_bits(max31335->regmap, MAX31335_INT_EN,
-				  MAX31335_INT_EN1_A1IE, MAX31335_INT_EN1_A1IE);
+				  MAX31335_INT_EN1_A1IE, enabled);
 }
 
 static irqreturn_t max31335_handle_irq(int irq, void *dev_id)
@@ -263,18 +314,13 @@ static irqreturn_t max31335_handle_irq(int irq, void *dev_id)
 	if (ret)
 		goto exit;
 
-	if (status & MAX31335_STATUS1_A1F) {
+	if (FIELD_GET(MAX31335_STATUS1_A1F, status)) {
 		ret = regmap_update_bits(max31335->regmap, MAX31335_STATUS1,
 					 MAX31335_STATUS1_A1F, 0);
 		if (ret)
 			goto exit;
 
-		return regmap_update_bits(max31335->regmap, MAX31335_INT_EN,
-				  MAX31335_INT_EN1_A1IE, 0);
-		if (ret)
-			goto exit;
-
-		rtc_update_irq(max31335->rtc, 1, RTC_AF);
+		rtc_update_irq(max31335->rtc, 1, RTC_AF | RTC_IRQF);
 	}
 
 exit:
@@ -284,11 +330,11 @@ exit:
 }
 
 static const struct rtc_class_ops max31335_rtc_ops = {
-	.read_time = max31335_get_time,
+	.read_time = max31335_read_time,
 	.set_time = max31335_set_time,
 	.read_offset = max31335_read_offset,
 	.set_offset = max31335_set_offset,
-	.read_alarm = max31335_get_alarm,
+	.read_alarm = max31335_read_alarm,
 	.set_alarm = max31335_set_alarm,
 	.alarm_irq_enable = max31335_alarm_irq_enable,
 };
