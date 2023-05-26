@@ -107,6 +107,9 @@
 
 #define MAX31335_ENCLKO			BIT(2)
 
+#define MAX31335_RAM_SIZE		64
+#define MAX31335_TIME_SIZE		0x07
+
 #define clk_hw_to_max31335(_hw) container_of(_hw, struct max31335_data, clkout)
 
 struct max31335_data {
@@ -452,6 +455,31 @@ static const struct clk_ops max31335_clkout_ops = {
 struct clk_init_data max31335_clk_init = {
 	.name = "max31335-clkout",
 	.ops = &max31335_clkout_ops,
+};
+
+static int max31335_nvmem_reg_read(void *priv, unsigned int offset,
+				   void *val, size_t bytes)
+{
+	struct max31335_data *max31335 = priv;
+	unsigned int reg = MAX31335_TS0_SEC_1_128 + offset;
+
+	return regmap_bulk_read(max31335->regmap, reg, val, bytes);
+}
+
+static int max31335_nvmem_reg_write(void *priv, unsigned int offset,
+				    void *val, size_t bytes)
+{
+	struct max31335_data *max31335 = priv;
+	unsigned int reg = MAX31335_TS0_SEC_1_128 + offset;
+
+	return regmap_bulk_write(max31335->regmap, reg, val, bytes);
+}
+
+struct nvmem_config max31335_nvmem_cfg = {
+	.reg_read = max31335_nvmem_reg_read,
+	.reg_write = max31335_nvmem_reg_write,
+	.word_size = 8,
+	.size = MAX31335_RAM_SIZE,
 };
 
 static int max31335_read_temp(struct device *dev, enum hwmon_sensor_types type,
