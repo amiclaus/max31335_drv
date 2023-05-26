@@ -11,6 +11,8 @@
 #include <linux/bcd.h>
 #include <linux/bitfield.h>
 #include <linux/bitops.h>
+#include <linux/clk.h>
+#include <linux/clk-provider.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
@@ -96,11 +98,17 @@
 #define MAX31335_TRICKLE		GENMASK(3, 1)
 #define MAX31335_EN_TRICKLE		BIT(0)
 
+#define MAX31335_ENCLKO			BIT(2)
+
+#define clk_hw_to_max31335(_hw) container_of(_hw, struct max31335_data, clkout)
+
 struct max31335_data {
 	struct regmap *regmap;
 	struct rtc_device *rtc;
 	struct clk_hw clkout;
 };
+
+static const int max31335_clkout_freq[] = { 1, 64, 1024, 32768 };
 
 static u16 max31335_trickle_resistors[] = {3000, 6000, 11000};
 
@@ -314,6 +322,75 @@ static int max31335_trickle_charger_setup(struct device *dev, struct max31335_da
 
 	return regmap_write(max31335->regmap, MAX31335_TRICKLE_REG,
 			    FIELD_PREP(MAX31335_TRICKLE, i) | MAX31335_EN_TRICKLE);
+}
+
+static unsigned long max31335_clkout_recalc_rate(struct clk_hw *hw,
+						 unsigned long parent_rate)
+{
+	struct max31335_data *max31335 = clk_hw_to_max31335(hw);
+	unsigned int freq_mask;
+	unsigned int reg;
+	int ret;
+
+	ret = regmap_read(max31335->regmap, MAX31335_RTC_CONFIG2, &reg);
+	if (ret)
+		return 0;
+
+	freq_mask = __roundup_pow_of_two(ARRAY_SIZE(max31335_clkout_freq)) - 1;
+
+	return max31335_clkout_freq[reg & freq_mask];
+}
+
+static long max31335_clkout_round_rate(struct clk_hw *hw, unsigned long rate,
+				       unsigned long *prate)
+{
+	int index;
+
+	index = find_closest(rate, max31335_clkout_freq,
+			     ARRAY_SIZE(max31335_clkout_freq));
+
+	return max31335_clkout_freq[index];
+}
+
+static int max31335_clkout_set_rate(struct clk_hw *hw, unsigned long rate,
+				    unsigned long parent_rate)
+{
+	struct max31335_data *max31335 = clk_hw_to_max31335(hw);
+	unsigned int freq_mask;
+	int index;
+
+	index = find_closest(rate, max31335_clkout_freq, ARRAY_SIZE(max31335_clkout_freq));
+	freq_mask = __roundup_pow_of_two(ARRAY_SIZE(max31335_clkout_freq)) - 1;
+
+	return regmap_update_bits(max31335->regmap, MAX31335_RTC_CONFIG2,
+				  freq_mask, index);
+}
+
+static int max31335_clkout_enable(struct clk_hw *hw)
+{
+	struct max31335_data *max31335 = clk_hw_to_max31335(hw);
+
+	return regmap_set_bits(max31335->regmap, MAX31335_RTC_CONFIG2, MAX31335_ENCLKO);
+}
+
+static void max31335_clkout_disable(struct clk_hw *hw)
+{
+	struct max31335_data *max31335 = clk_hw_to_max31335(hw);
+
+	regmap_clear_bits(max31335->regmap, MAX31335_RTC_CONFIG2, MAX31335_ENCLKO);
+}
+
+static int max31335_clkout_is_enabled(struct clk_hw *hw)
+{
+	struct max31335_data *max31335 = clk_hw_to_max31335(hw);
+	unsigned int reg;
+	int ret;
+
+	ret = regmap_read(max31335->regmap, MAX31335_RTC_CONFIG2, &reg);
+	if (ret)
+		return ret;
+
+	return !!(reg & MAX31335_ENCLKO);
 }
 
 static const struct clk_ops max31335_clkout_ops = {
