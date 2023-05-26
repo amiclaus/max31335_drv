@@ -14,6 +14,7 @@
 #include <linux/bitops.h>
 #include <linux/clk.h>
 #include <linux/clk-provider.h>
+#include <linux/hwmon.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
@@ -451,6 +452,53 @@ static const struct clk_ops max31335_clkout_ops = {
 struct clk_init_data max31335_clk_init = {
 	.name = "max31335-clkout",
 	.ops = &max31335_clkout_ops,
+};
+
+static int max31335_read_temp(struct device *dev, enum hwmon_sensor_types type,
+			      u32 attr, int channel, long *val)
+{
+	struct max31335_data *max31335 = dev_get_drvdata(dev);
+	u8 reg[2];
+	s16 temp;
+	int ret;
+
+	if (type != hwmon_temp || attr != hwmon_temp_input)
+		return -EOPNOTSUPP;
+
+	ret = regmap_bulk_read(max31335->regmap, MAX31335_TEMP_DATA_MSB, reg, 2);
+	if (ret)
+		return ret;
+
+	temp = get_unaligned_be16(reg);
+
+	*val = (temp / 64) * 250;
+
+	return 0;
+}
+
+static umode_t max31335_is_visible(const void *data,
+				   enum hwmon_sensor_types type,
+				   u32 attr, int channel)
+{
+	if (type == hwmon_temp && attr == hwmon_temp_input)
+		return 0444;
+
+	return 0;
+}
+
+static const struct hwmon_channel_info *max31335_info[] = {
+	HWMON_CHANNEL_INFO(temp, HWMON_T_INPUT),
+	NULL
+};
+
+static const struct hwmon_ops max31335_hwmon_ops = {
+	.is_visible = max31335_is_visible,
+	.read = max31335_read_temp,
+};
+
+static const struct hwmon_chip_info max31335_chip_info = {
+	.ops = &max31335_hwmon_ops,
+	.info = max31335_info,
 };
 
 static int max31335_clkout_register(struct device *dev)
