@@ -12,11 +12,14 @@ allOf:
 maintainers:
   - Antoniu Miclaus <antoniu.miclaus@analog.com>
 
+description: Analog Devices MAX31335 I2C RTC
+
 properties:
   compatible:
     const: adi,max31335
 
   reg:
+    description: I2C address of the RTC
     maxItems: 1
 
   interrupts:
@@ -55,5 +58,4 @@ examples:
             trickle-diode-enable;
         };
     };
-
 ...
