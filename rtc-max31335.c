@@ -107,6 +107,7 @@
 
 #define MAX31335_ENCLKO			BIT(2)
 
+#define MAX31335_STATUS1_DEFAULT	0x40
 #define MAX31335_RAM_SIZE		64
 #define MAX31335_TIME_SIZE		0x07
 
@@ -560,7 +561,7 @@ static int max31335_probe(struct i2c_client *client,
 {
 	struct max31335_data *max31335;
 	struct device *hwmon;
-	int ret;
+	int ret, status;
 
 	max31335 = devm_kzalloc(&client->dev, sizeof(struct max31335_data),
 				GFP_KERNEL);
@@ -572,6 +573,23 @@ static int max31335_probe(struct i2c_client *client,
 		return PTR_ERR(max31335->regmap);
 
 	i2c_set_clientdata(client, max31335);
+
+	ret = regmap_write(max31335->regmap, MAX31335_RTC_RESET, 1);
+	if (ret)
+		return ret;
+
+	ret = regmap_write(max31335->regmap, MAX31335_RTC_RESET, 0);
+	if (ret)
+		return ret;
+
+	ret = regmap_read(max31335->regmap, MAX31335_STATUS1, &status);
+	if (ret)
+		return ret;
+
+	if (status != MAX31335_STATUS1_DEFAULT) {
+		dev_err(&client->dev, "Unable to read from device.\n");
+		return -EINVAL;
+	}
 
 	max31335->rtc = devm_rtc_allocate_device(&client->dev);
 	if (IS_ERR(max31335->rtc))
