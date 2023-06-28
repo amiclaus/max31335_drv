@@ -310,7 +310,8 @@ static int max31335_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	struct rtc_time time;
 	u8 regs[6];
 
-	ret = regmap_bulk_read(max31335->regmap, MAX31335_ALM1_SEC, regs, sizeof(regs));
+	ret = regmap_bulk_read(max31335->regmap, MAX31335_ALM1_SEC, regs,
+			       sizeof(regs));
 	if (ret)
 		return ret;
 
@@ -416,7 +417,8 @@ static const struct rtc_class_ops max31335_rtc_ops = {
 	.alarm_irq_enable = max31335_alarm_irq_enable,
 };
 
-static int max31335_trickle_charger_setup(struct device *dev, struct max31335_data *max31335)
+static int max31335_trickle_charger_setup(struct device *dev,
+					  struct max31335_data *max31335)
 {
 	u32 ohms;
 	bool diode = false;
@@ -444,7 +446,8 @@ static int max31335_trickle_charger_setup(struct device *dev, struct max31335_da
 		i = i + 1;
 
 	return regmap_write(max31335->regmap, MAX31335_TRICKLE_REG,
-			    FIELD_PREP(MAX31335_TRICKLE_REG_TRICKLE, i) | MAX31335_TRICKLE_REG_EN_TRICKLE);
+			    FIELD_PREP(MAX31335_TRICKLE_REG_TRICKLE, i) |
+				       MAX31335_TRICKLE_REG_EN_TRICKLE);
 }
 
 static unsigned long max31335_clkout_recalc_rate(struct clk_hw *hw,
@@ -482,7 +485,8 @@ static int max31335_clkout_set_rate(struct clk_hw *hw, unsigned long rate,
 	unsigned int freq_mask;
 	int index;
 
-	index = find_closest(rate, max31335_clkout_freq, ARRAY_SIZE(max31335_clkout_freq));
+	index = find_closest(rate, max31335_clkout_freq,
+			     ARRAY_SIZE(max31335_clkout_freq));
 	freq_mask = __roundup_pow_of_two(ARRAY_SIZE(max31335_clkout_freq)) - 1;
 
 	return regmap_update_bits(max31335->regmap, MAX31335_RTC_CONFIG2,
@@ -493,14 +497,16 @@ static int max31335_clkout_enable(struct clk_hw *hw)
 {
 	struct max31335_data *max31335 = clk_hw_to_max31335(hw);
 
-	return regmap_set_bits(max31335->regmap, MAX31335_RTC_CONFIG2, MAX31335_RTC_CONFIG2_ENCLKO);
+	return regmap_set_bits(max31335->regmap, MAX31335_RTC_CONFIG2,
+			       MAX31335_RTC_CONFIG2_ENCLKO);
 }
 
 static void max31335_clkout_disable(struct clk_hw *hw)
 {
 	struct max31335_data *max31335 = clk_hw_to_max31335(hw);
 
-	regmap_clear_bits(max31335->regmap, MAX31335_RTC_CONFIG2, MAX31335_RTC_CONFIG2_ENCLKO);
+	regmap_clear_bits(max31335->regmap, MAX31335_RTC_CONFIG2,
+			  MAX31335_RTC_CONFIG2_ENCLKO);
 }
 
 static int max31335_clkout_is_enabled(struct clk_hw *hw)
